@@ -1,0 +1,69 @@
+# Modify Argolis Policies
+# References: 
+# - https://cloud.google.com/sdk/gcloud/reference/beta/resource-manager
+# - https://cloud.google.com/compute/docs/images/restricting-image-access#trusted_images
+
+###################
+# CREATE PROJECTS #
+###################
+
+# Define Projects
+declare -a projects=(
+                "alw-tk-01"
+)
+
+# Create Projects
+for project in "${projects[@]}"
+do
+    gcloud projects create ${project} --labels=cost-center=mycostcenter -q
+    gcloud alpha billing accounts projects link ${project} --billing-account=01EA0A-CF27AA-7838F7
+done
+
+# Outer loop - Loop through Argolis Projects
+for project in "${projects[@]}"
+do
+# Inner Loop - Loop Through Policies with Constraints
+declare -a policies=("constraints/compute.trustedImageProjects" 
+                "constraints/compute.vmExternalIpAccess"
+                "constraints/compute.restrictSharedVpcSubnetworks"
+                "constraints/compute.restrictSharedVpcHostProjects"
+                "constraints/compute.restrictVpcPeering"
+                "constraints/compute.vmCanIpForward"
+                )
+for policy in "${policies[@]}"
+do
+cat <<EOF > new_policy.yaml
+constraint: $policy
+listPolicy:
+ allValues: ALLOW
+EOF
+gcloud resource-manager org-policies set-policy new_policy.yaml --project=${project}
+done
+# End Inner Loop
+
+# Disable Policies without Constraints
+gcloud beta resource-manager org-policies disable-enforce compute.requireShieldedVm --project=${project}
+gcloud beta resource-manager org-policies disable-enforce compute.requireOsLogin --project=${project}
+gcloud beta resource-manager org-policies disable-enforce iam.disableServiceAccountKeyCreation --project=${project}
+gcloud beta resource-manager org-policies disable-enforce iam.disableServiceAccountCreation --project=${project}
+
+done
+# End Outer Loop
+
+
+###################
+# DELETE PROJECTS #
+###################
+
+# Delete Existing Lien (Shared VPC scenarios) - Will produce error if there is no lein, but that's fine
+for project in "${projects[@]}"
+do
+    LIEN=$(gcloud alpha resource-manager liens list --project ${project} -q 2>/dev/null | grep NAME | sed 's/^.*: //')
+    gcloud alpha resource-manager liens delete $LIEN --project ${project}
+done
+
+# Delete Projects
+for project in "${projects[@]}"
+do
+    gcloud projects delete ${project} -q
+done
